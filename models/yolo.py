@@ -19,7 +19,7 @@ from utils.plots import feature_visualization
 from utils.torch_utils import (fuse_conv_and_bn, initialize_weights, model_info, profile, scale_img, select_device,
                                time_sync)
 from utils.tal.anchor_generator import make_anchors, dist2bbox
-
+from resnetEncoders import ResNet_Bottleneck
 try:
     import thop  # for FLOPs computation
 except ImportError:
@@ -527,7 +527,21 @@ class BaseModel(nn.Module):
         y, dt = [], []  # outputs
         for m in self.model:
             if m.f != -1:  # if not from previous layer
-                x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
+                if isinstance (m.f, int):
+                    x = y[m.f]
+                else:
+                    x_l = []
+                    for j in m.f:
+                        if j==-1:
+                            x_l.append(x)
+                        elif j==1:
+                            x_dim = x.size()[2:]
+                            matching_tensors = next(tensor for tensor in y[1] if tensor.size()[2:] == x_dim)
+                            x_l.append(matching_tensors)
+                        else:
+                            x_l.append(y[j])
+                    x = x_l
+                # x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
             if profile:
                 self._profile_one_layer(m, x, dt)
             x = m(x)  # run
@@ -723,7 +737,10 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
 
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
     for i, (f, n, m, args) in enumerate(d['backbone'] + d['head']):  # from, number, module, args
-        m = eval(m) if isinstance(m, str) else m  # eval strings
+        if m=="ResnetEncoder":
+            m = ResNet
+        else:
+            m = eval(m) if isinstance(m, str) else m  # eval strings
         for j, a in enumerate(args):
             with contextlib.suppress(NameError):
                 args[j] = eval(a) if isinstance(a, str) else a  # eval strings
@@ -744,7 +761,20 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
         elif m is nn.BatchNorm2d:
             args = [ch[f]]
         elif m is Concat:
-            c2 = sum(ch[x] for x in f)
+            c2 = 0
+            for index_concat, x in enumerate(f):
+                if x == -1:
+                    c2+=ch[x]
+                elif x == 1:
+                    if f[index_concat-1]==6:
+                        c2+=512
+                    elif f[index_concat-1]==11:
+                        c2+=2048
+                    elif f[index_concat-1]==14:
+                        c2+=1024
+                else:
+                    c2+=ch[x]
+            # c2 = sum(ch[x] for x in f)
         elif m is Shortcut:
             c2 = ch[f[0]]
         elif m is ReOrg:
@@ -766,6 +796,9 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             c2 = ch[f] * args[0] ** 2
         elif m is Expand:
             c2 = ch[f] // args[0] ** 2
+        elif m is ResNet:
+            args = [ResNet_Bottleneck, [3, 4, 23, 3]]
+            c2 = ch[-1]
         else:
             c2 = ch[f]
 
@@ -784,7 +817,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='yolo.yaml', help='model.yaml')
+    parser.add_argument('--cfg', type=str, default='models/detect/yolov9-c_parallel.yaml', help='model.yaml')
     parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--profile', action='store_true', help='profile model speed')

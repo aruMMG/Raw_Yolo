@@ -1,2 +1,12 @@
 runs
 datasets
+wandb
+__pycache__
+utils/__pycache__
+panoptic/__pycache__
+utils/panoptic/__pycache__
+utils/panoptic/tal/__pycache__
+segment/__pycache__
+utils/segment/__pycache__
+utils/segment/tal/__pycache__
+*.pt

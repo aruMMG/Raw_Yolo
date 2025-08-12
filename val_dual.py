@@ -161,7 +161,9 @@ def run(
                                        rect=rect,
                                        workers=workers,
                                        min_items=opt.min_items,
-                                       prefix=colorstr(f'{task}: '))[0]
+                                       prefix=colorstr(f'{task}: '),
+                                       raw_dir=opt.raw_dir,
+                                       raw_ext=opt.raw_ext)[0]
 
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
@@ -176,19 +178,29 @@ def run(
     jdict, stats, ap, ap_class = [], [], [], []
     callbacks.run('on_val_start')
     pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
-    for batch_i, (im, targets, paths, shapes) in enumerate(pbar):
+    for batch_i, (im, im_raw, targets, paths, shapes) in enumerate(pbar):
         callbacks.run('on_val_batch_start')
         with dt[0]:
             if cuda:
                 im = im.to(device, non_blocking=True)
                 targets = targets.to(device)
+                im_raw = im_raw.to(device, non_blocking=True)
             im = im.half() if half else im.float()  # uint8 to fp16/32
             im /= 255  # 0 - 255 to 0.0 - 1.0
+            if im_raw.numel() > 0:
+                if im_raw.dtype == torch.uint8:
+                    im_raw = im_raw.float() / 255.0
+                elif im_raw.dtype == torch.uint16:
+                    im_raw = im_raw.float() / 65535.0
+                else:
+                    im_raw = im_raw.float()  # assume already [0,1] or proper float range
+                if half:
+                    im_raw = im_raw.half()
             nb, _, height, width = im.shape  # batch size, channels, height, width
 
         # Inference
         with dt[1]:
-            preds, train_out = model(im) if compute_loss else (model(im, augment=augment), None)
+            preds, train_out = model(im, im_raw) if compute_loss else (model(im, im_raw, augment=augment), None)
 
         # Loss
         if compute_loss:

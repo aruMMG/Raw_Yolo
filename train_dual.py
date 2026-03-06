@@ -202,7 +202,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                                               prefix=colorstr('train: '),
                                               shuffle=True,
                                               min_items=opt.min_items,
-                                              raw_dir=opt.raw_dir,
+                                              raw_dir=opt.raw_dir_train,
                                               raw_ext=opt.raw_ext)
     labels = np.concatenate(dataset.labels, 0)
     mlc = int(labels[:, 0].max())  # max label class
@@ -222,7 +222,7 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
                                        workers=workers * 2,
                                        pad=0.5,
                                        prefix=colorstr('val: '),
-                                       raw_dir=opt.raw_dir,
+                                       raw_dir=opt.raw_dir_val,
                                        raw_ext=opt.raw_ext)[0]
 
         if not resume:
@@ -294,7 +294,9 @@ def train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp dictio
             ni = i + nb * epoch  # number integrated batches (since train start)
             imgs = imgs.to(device, non_blocking=True).float() / 255  # uint8 to float32, 0-255 to 0.0-1.0
             # imgs_raw = torch.rand(*imgs.shape).to(device)
-            imgs_raw = imgs_raw.to(device, non_blocking=True)/255
+            # print(imgs_raw.dtype)
+            imgs_raw = imgs_raw.to(device, non_blocking=True) / 2**16
+
 
             # Warmup
             if ni <= nw:
@@ -447,12 +449,14 @@ def parse_opt(known=False):
     # parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
     parser.add_argument('--weights', type=str, default='', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='models/detect/yolov9-c_parallel.yaml', help='model.yaml path')
-    parser.add_argument('--data', type=str, default=ROOT / 'yaml/defects.yaml', help='dataset.yaml path')
-    parser.add_argument('--raw_dir', type=str, default=ROOT / 'datasets/defects/images/train/', help='raw data path')
-    parser.add_argument('--raw_ext', type=str, default='.jpg', help='raw data ext')
+    parser.add_argument('--data', type=str, default=ROOT / 'yaml/data.yaml', help='dataset.yaml path')
+    parser.add_argument('--raw_dir_train', type=str, default=ROOT / 'datasets/parallel_data/raw/train/', help='raw data path')
+    parser.add_argument('--raw_dir_val', type=str, default=ROOT / 'datasets/parallel_data/raw/val/', help='raw data path')
+    parser.add_argument('--raw_dir_test', type=str, default=ROOT / 'datasets/defects/images/train/', help='raw data path')
+    parser.add_argument('--raw_ext', type=str, default='.raw', help='raw data ext')
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch-high.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=100, help='total training epochs')
-    parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs, -1 for autobatch')
+    parser.add_argument('--epochs', type=int, default=250, help='total training epochs')
+    parser.add_argument('--batch-size', type=int, default=4, help='total batch size for all GPUs, -1 for autobatch')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='train, val image size (pixels)')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
@@ -471,7 +475,7 @@ def parse_opt(known=False):
     parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
     parser.add_argument('--workers', type=int, default=8, help='max dataloader workers (per RANK in DDP mode)')
     parser.add_argument('--project', default=ROOT / 'runs/train', help='save to project/name')
-    parser.add_argument('--name', default='exp', help='save to project/name')
+    parser.add_argument('--name', default='par_exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
     parser.add_argument('--cos-lr', action='store_true', help='cosine LR scheduler')

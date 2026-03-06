@@ -29,6 +29,7 @@ from utils.general import (DATASETS_DIR, LOGGER, NUM_THREADS, TQDM_BAR_FORMAT, c
                            check_yaml, clean_str, cv2, is_colab, is_kaggle, segments2boxes, unzip_file, xyn2xy,
                            xywh2xyxy, xywhn2xyxy, xyxy2xywhn)
 from utils.torch_utils import torch_distributed_zero_first
+from matplotlib import pyplot as plt
 
 # Parameters
 HELP_URL = 'See https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
@@ -42,6 +43,24 @@ PIN_MEMORY = str(os.getenv('PIN_MEMORY', True)).lower() == 'true'  # global pin_
 for orientation in ExifTags.TAGS.keys():
     if ExifTags.TAGS[orientation] == 'Orientation':
         break
+
+def imshow(image, title="image"):
+    plt.figure()
+    plt.title(title)
+    plt.imshow(image)
+    plt.show()
+
+
+BIT8  = 2 ** 8
+BIT16 = 2 ** 16
+BIT24 = 2 ** 24
+height = 1856
+width = 2880
+def read_raw_24b(file_path, img_shape=(1, 1, height, width), read_type=np.uint8):
+    raw_data = np.fromfile(file_path, dtype=read_type)
+    raw_data = raw_data[0::3] + raw_data[1::3] * BIT8 + raw_data[2::3] * BIT16
+    raw_data = raw_data.reshape(height, width)
+    return raw_data
 
 
 def get_hash(paths):
@@ -863,11 +882,14 @@ class LoadImagesAndLabels(Dataset):
                 im = cv2.resize(im, (int(w0 * r), int(h0 * r)), interpolation=interp)
             return im, (h0, w0), im.shape[:2]  # im, hw_original, hw_resized
         return self.ims[i], self.im_hw0[i], self.im_hw[i]  # im, hw_original, hw_resized
-    
+
+
+    # Changed Imread_Raw func
+
     def load_image_raw(self, i):
-        # Mirror of load_image() but for RAW; uses same target img_size logic
         f_raw = self.raw_files[i]
-        im = cv2.imread(f_raw, cv2.IMREAD_UNCHANGED)  # RAW could be 1ch or 16-bit
+        im = read_raw_24b(f_raw)
+        # im = cv2.imread(f_raw, cv2.IMREAD_UNCHANGED)  # RAW could be 1ch or 16-bit
         assert im is not None, f'RAW image Not Found {f_raw}'
         # If single channel, expand to HxWx1 to keep transforms generic
         if im.ndim == 2:
@@ -876,8 +898,15 @@ class LoadImagesAndLabels(Dataset):
         r = self.img_size / max(h0, w0)
         if r != 1:
             interp = cv2.INTER_LINEAR if (self.augment or r > 1) else cv2.INTER_AREA
+            im = im.astype(np.float32)
             im = cv2.resize(im, (int(w0 * r), int(h0 * r)), interpolation=interp)
+            im = np.stack([im, im, im], axis=-1) # stacking to make 3 channel raw image
+        # print(im[100, 200])
+        # im = im[..., np.newaxis]
+        # print(im.shape, (h0, w0), im.shape[:2])
+
         return im, (h0, w0), im.shape[:2]
+
 
     def cache_images_to_disk(self, i):
         # Saves an image as an *.npy file for faster loading
@@ -1005,6 +1034,68 @@ class LoadImagesAndLabels(Dataset):
             return img4, raw4, labels4
         return img4, labels4
 
+
+    def load_mosaic_raw(self, index):
+        labels4, segments4 = [], []
+        s = self.img_size
+        yc, xc = (int(random.uniform(-x, 2 * s + x)) for x in self.mosaic_border)
+        indices = [index] + random.choices(self.indices, k=3)
+        random.shuffle(indices)
+
+        img4, raw4 = None, None
+        for i, index in enumerate(indices):
+            img, _, (h, w) = self.load_image_raw(index)
+            if self.raw_files is not None:
+                raw, _, _ = self.load_image_raw(index)
+
+            if i == 0:
+                img4 = np.full((s * 2, s * 2, img.shape[2]), 114, dtype=np.uint8)
+                if self.raw_files is not None:
+                    fill = 0 if raw.dtype != np.uint8 else 0
+                    raw4 = np.full((s * 2, s * 2, raw.shape[2]), fill, dtype=raw.dtype)
+                x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc
+                x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h
+            elif i == 1:
+                x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, s * 2), yc
+                x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
+            elif i == 2:
+                x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(s * 2, yc + h)
+                x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
+            else:
+                x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
+                x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
+
+            img4[y1a:y2a, x1a:x2a] = img[y1b:y2b, x1b:x2b]
+            if self.raw_files is not None:
+                raw4[y1a:y2a, x1a:x2a] = raw[y1b:y2b, x1b:x2b]
+
+            padw, padh = x1a - x1b, y1a - y1b
+
+            labels, segments = self.labels[index].copy(), self.segments[index].copy()
+            if labels.size:
+                labels[:, 1:] = xywhn2xyxy(labels[:, 1:], w, h, padw, padh)
+                segments = [xyn2xy(x, w, h, padw, padh) for x in segments]
+            labels4.append(labels); segments4.extend(segments)
+
+        labels4 = np.concatenate(labels4, 0)
+        for x in (labels4[:, 1:], *segments4):
+            np.clip(x, 0, 2 * s, out=x)
+
+        # identical random_perspective on both: sync RNG
+        state_py, state_np = random.getstate(), np.random.get_state()
+        img4, labels4, segments4 = copy_paste(img4, labels4, segments4, p=self.hyp['copy_paste'])
+        img4, labels4 = random_perspective(img4, labels4, segments4,
+                                        degrees=self.hyp['degrees'], translate=self.hyp['translate'],
+                                        scale=self.hyp['scale'], shear=self.hyp['shear'],
+                                        perspective=self.hyp['perspective'], border=self.mosaic_border)
+        if self.raw_files is not None:
+            random.setstate(state_py); np.random.set_state(state_np)
+            raw4, _ = random_perspective(raw4, labels4.copy(), segments4,
+                                        degrees=self.hyp['degrees'], translate=self.hyp['translate'],
+                                        scale=self.hyp['scale'], shear=self.hyp['shear'],
+                                        perspective=self.hyp['perspective'], border=self.mosaic_border)
+            return img4, raw4, labels4
+        return img4, labels4
 
     def load_mosaic9(self, index):
         # YOLOv5 9-mosaic loader. Loads 1 image + 8 random images into a 9-image mosaic

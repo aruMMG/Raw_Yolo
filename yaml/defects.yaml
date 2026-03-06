@@ -1,5 +1,0 @@
-train: ./datasets/defects/images/train
-val: ./datasets/defects/images/train
-
-nc: 1
-names: ["split"]

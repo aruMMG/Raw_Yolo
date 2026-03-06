@@ -498,11 +498,13 @@ def check_dataset(data, autodownload=True):
     if isinstance(data, (str, Path)) and (is_zipfile(data) or is_tarfile(data)):
         download(data, dir=f'{DATASETS_DIR}/{Path(data).stem}', unzip=True, delete=False, curl=False, threads=1)
         data = next((DATASETS_DIR / Path(data).stem).rglob('*.yaml'))
+
         extract_dir, autodownload = data.parent, False
 
     # Read yaml (optional)
     if isinstance(data, (str, Path)):
         data = yaml_load(data)  # dictionary
+        print(data)
 
     # Checks
     for k in 'train', 'val', 'names':

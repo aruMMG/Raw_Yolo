@@ -1,0 +1,5 @@
+train: ./datasets/shapes_dataset/images/train/
+val: ./datasets/shapes_dataset/images/val/
+
+nc: 2
+names: ["S1", "S2"]

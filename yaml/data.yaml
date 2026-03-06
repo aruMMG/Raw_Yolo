@@ -1,0 +1,5 @@
+train: ./datasets/parallel_data/images/train/
+val: ./datasets/parallel_data/images/val/
+
+nc: 6
+names: ["Car", "Cyclist", "Pedestrian", "Tram", "Truck", "Other"]
